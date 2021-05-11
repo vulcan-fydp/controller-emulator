@@ -1,1 +1,1 @@
-mod usb_gadget;
+pub mod usb_gadget;

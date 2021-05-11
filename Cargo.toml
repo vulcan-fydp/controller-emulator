@@ -1,0 +1,17 @@
+[package]
+name = "controller-emulator"
+version = "0.1.0"
+authors = ["Callum Moseley <callum.moseley1@gmail.com>"]
+edition = "2018"
+
+[lib]
+name = "controller_emulator"
+path = "src/lib.rs"
+
+[[bin]]
+name = "configurator"
+path = "src/bin/main.rs"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]

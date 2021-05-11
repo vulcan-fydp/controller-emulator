@@ -1,7 +1,9 @@
-use std::io::{stdout, BufWriter};
+use controller_emulator::usb_gadget::ns_procon::ns_procons;
 
 fn main() {
-    let stdout = stdout();
-    let message = String::from("Hellow fellow Rustaceans!");
-    let width = message.chars().count();
+    let procons = ns_procons();
+
+    procons
+        .create_config("procons")
+        .expect("Could not create configuration");
 }

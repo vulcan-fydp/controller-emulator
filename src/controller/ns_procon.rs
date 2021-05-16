@@ -8,6 +8,7 @@ use std::io::Result;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Sender, TryRecvError};
 use std::thread;
+use std::fs::OpenOptions;
 
 // Button index constants
 pub mod inputs {
@@ -83,7 +84,8 @@ fn response(code: u8, cmd: u8, data: &[u8], writer: &mut BufWriter<File>) {
         return;
     }
     let padding = vec![0; 64 - 2 - data.len()];
-    let _ = writer.write_all(&[&[code, cmd], data, &padding].concat());
+    let send = &[&[code, cmd], data, &padding].concat();
+    let _ = writer.write_all(send);
     let _ = writer.flush();
 }
 
@@ -115,10 +117,11 @@ fn send_response(buffer: &[u8], input: &[u8], writer: &mut BufWriter<File>) {
     }
     if buffer[0] == 0x80 {
         match buffer[1] {
-            0x01 => response(
+            0x01 =>
+                response(
                 0x81,
                 0x01,
-                &[0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+                &[0, 3, 0, 0, 0, 0, 0, 0],  
                 writer,
             ),
             0x02 => response(0x81, 0x02, &[], writer),
@@ -205,8 +208,8 @@ impl Controller for NsProcon {
     }
     fn start_comms(&mut self) -> Result<()> {
         let (tx, rx) = mpsc::channel();
-        let hid_read = File::open(&self.hid_path)?;
-        let hid_write = File::open(&self.hid_path)?;
+        let hid_read = OpenOptions::new().read(true).open(&self.hid_path)?;
+        let hid_write = OpenOptions::new().write(true).open(&self.hid_path)?;
 
         let mut buffer = [0; 64];
         let mut reader = BufReader::new(hid_read);
@@ -228,7 +231,7 @@ impl Controller for NsProcon {
                 continue;
             }
 
-            let input = &magic::INITIAL_INPUT[1..11];
+            let input = &magic::INITIAL_INPUT[1..10];
 
             if read >= 10 {
                 send_response(&buffer, input, &mut writer);

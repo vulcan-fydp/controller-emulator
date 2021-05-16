@@ -3,6 +3,9 @@ use std::io::prelude::*;
 use std::io::Result;
 use std::os::unix::fs::symlink;
 use std::path::Path;
+use std::process::Command;
+
+pub mod ns_procon;
 
 pub enum Speed {
     LowSpeed,
@@ -65,8 +68,6 @@ pub struct Gadget {
     pub(in crate) product: String,
     pub(in crate) manufacturer: String,
 }
-
-pub mod ns_procon;
 
 fn write_file(path: &Path, name: &str, contents: &[u8]) -> Result<()> {
     create_dir_all(&path)?;
@@ -139,4 +140,15 @@ impl Gadget {
 
         Ok(())
     }
+}
+
+pub fn activate(name: &str) -> Result<()> {
+    let output = Command::new("ls").arg("/sys/class/udc").output()?;
+    let mut udc = File::create(
+        Path::new("/sys/kernel/config/usb_gadget")
+            .join(name)
+            .join("UDC"),
+    )?;
+    udc.write_all(&output.stdout)?;
+    Ok(())
 }

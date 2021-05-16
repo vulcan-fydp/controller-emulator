@@ -1,6 +1,7 @@
 use crate::controller::Controller;
 use bitvec::prelude::*;
 use std::fs::File;
+use std::fs::OpenOptions;
 use std::io::prelude::*;
 use std::io::BufReader;
 use std::io::BufWriter;
@@ -8,7 +9,6 @@ use std::io::Result;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Sender, TryRecvError};
 use std::thread;
-use std::fs::OpenOptions;
 
 // Button index constants
 pub mod inputs {
@@ -117,13 +117,7 @@ fn send_response(buffer: &[u8], input: &[u8], writer: &mut BufWriter<File>) {
     }
     if buffer[0] == 0x80 {
         match buffer[1] {
-            0x01 =>
-                response(
-                0x81,
-                0x01,
-                &[0, 3, 0, 0, 0, 0, 0, 0],  
-                writer,
-            ),
+            0x01 => response(0x81, 0x01, &[0, 3, 0, 0, 0, 0, 0, 0], writer),
             0x02 => response(0x81, 0x02, &[], writer),
             0x04 => {
                 println!("sending input now"); // TODO

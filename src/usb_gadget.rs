@@ -144,9 +144,12 @@ impl Gadget {
 
 pub fn activate(name: &str) -> Result<()> {
     let path = Path::new("/sys/kernel/config/usb_gadget")
-            .join(name)
-            .join("UDC");
-    Command::new("sh").arg("-c").arg(format!("echo \"\" > {}", path.display())).status()?;
+        .join(name)
+        .join("UDC");
+    Command::new("sh")
+        .arg("-c")
+        .arg(format!("echo \"\" > {}", path.display()))
+        .status()?;
     let output = Command::new("ls").arg("/sys/class/udc").output()?;
     let mut udc = File::create(&path)?;
     udc.write_all(&output.stdout)?;

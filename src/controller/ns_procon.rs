@@ -226,6 +226,8 @@ impl Controller for NsProcon {
                 continue;
             }
 
+            println!("{} {:?}", read, buffer);
+
             let input = &magic::INITIAL_INPUT[1..11];
 
             if read >= 10 {

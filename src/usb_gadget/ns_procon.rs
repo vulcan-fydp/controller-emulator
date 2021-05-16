@@ -21,6 +21,7 @@ pub fn report_desc() -> Vec<u8> {
 
 pub fn ns_procons() -> Gadget {
     let config = Config {
+        attributes: 0x80,
         description: "HID Configuration".to_string(),
 
         hid_functions: vec![0, 1, 2, 3],

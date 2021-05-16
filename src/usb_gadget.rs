@@ -73,7 +73,7 @@ fn write_file(path: &Path, name: &str, contents: &[u8]) -> Result<()> {
     create_dir_all(&path)?;
     let file_name = Path::join(path, name);
     let mut file = File::create(&file_name)?;
-    file.write_all(contents)?;
+    file.write_all(contents).expect("couldn't write");
     Ok(())
 }
 
@@ -91,7 +91,7 @@ fn write_file_int(path: &Path, name: &str, contents: u32) -> Result<()> {
 
 impl Gadget {
     pub fn create_config(&self, name: &str) -> Result<()> {
-        let base_path = Path::join(Path::new("/config/usb_gadget"), name);
+        let base_path = Path::join(Path::new("/sys/kernel/config/usb_gadget"), name);
 
         // Remove existing configuration
         let _ = remove_dir_all(&base_path);

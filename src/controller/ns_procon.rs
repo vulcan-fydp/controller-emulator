@@ -82,7 +82,9 @@ fn response(code: u8, cmd: u8, data: &[u8], writer: &mut BufWriter<File>) {
     if data.len() + 2 > 64 {
         return;
     }
-    let _ = writer.write_all(&[&[code, cmd], data].concat());
+    let padding = vec![0; 64 - 2 - data.len()];
+    let _ = writer.write_all(&[&[code, cmd], data, &padding].concat());
+    let _ = writer.flush();
 }
 
 fn uart_response(code: u8, subcmd: u8, input: &[u8], data: &[u8], writer: &mut BufWriter<File>) {
@@ -225,8 +227,6 @@ impl Controller for NsProcon {
             if read == 0 {
                 continue;
             }
-
-            println!("{} {:?}", read, buffer);
 
             let input = &magic::INITIAL_INPUT[1..11];
 

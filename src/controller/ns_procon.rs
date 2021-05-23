@@ -1,14 +1,11 @@
 use crate::controller::Controller;
 use bitvec::prelude::*;
-use std::fs::File;
+use std::fs::OpenOptions;
 use std::io::prelude::*;
-use std::io::BufReader;
-use std::io::BufWriter;
-use std::io::Result;
+use std::io::{BufReader, BufWriter, Result};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Sender, TryRecvError};
 use std::thread;
-use std::fs::OpenOptions;
 
 // Button index constants
 pub mod inputs {
@@ -76,55 +73,49 @@ mod magic {
 pub struct NsProcon {
     hid_path: PathBuf,
     input_state: BitArr!(for 72, in Lsb0, u8),
-    thread_tx: Option<Sender<()>>,
+    hid_thread_tx: Option<Sender<Vec<u8>>>,
+    protocol_thread_tx: Option<Sender<()>>,
 }
 
-fn response(code: u8, cmd: u8, data: &[u8], writer: &mut BufWriter<File>) {
+fn response(code: u8, cmd: u8, data: &[u8], hid_tx: &Sender<Vec<u8>>) {
     if data.len() + 2 > 64 {
         return;
     }
     let padding = vec![0; 64 - 2 - data.len()];
-    let send = &[&[code, cmd], data, &padding].concat();
-    let _ = writer.write_all(send);
-    let _ = writer.flush();
+    let send = [&[code, cmd], data, &padding].concat();
+    let _ = hid_tx.send(send);
 }
 
-fn uart_response(code: u8, subcmd: u8, input: &[u8], data: &[u8], writer: &mut BufWriter<File>) {
+fn uart_response(code: u8, subcmd: u8, input: &[u8], data: &[u8], hid_tx: &Sender<Vec<u8>>) {
     // TODO timestamp?
     response(
         0x21,
         0x00,
         &[&[0x81], input, &[0x0c, code, subcmd], data].concat(),
-        writer,
+        hid_tx,
     )
 }
 
-fn spi_response(addr_lo: u8, addr_hi: u8, input: &[u8], data: &[u8], writer: &mut BufWriter<File>) {
+fn spi_response(addr_lo: u8, addr_hi: u8, input: &[u8], data: &[u8], hid_tx: &Sender<Vec<u8>>) {
     uart_response(
         0x90,
         0x10,
         input,
         &[&[addr_lo, addr_hi, 0x00, 0x00], data].concat(),
-        writer,
+        hid_tx,
     );
 }
 
 // All credit for this function goes to:
 // https://mzyy94.com/blog/2020/03/20/nintendo-switch-pro-controller-usb-gadget/
-fn send_response(buffer: &[u8], input: &[u8], writer: &mut BufWriter<File>) {
+fn send_response(buffer: &[u8], input: &[u8], hid_tx: &Sender<Vec<u8>>) {
     if buffer.len() < 2 {
         return;
     }
     if buffer[0] == 0x80 {
         match buffer[1] {
-            0x01 =>
-                response(
-                0x81,
-                0x01,
-                &[0, 3, 0, 0, 0, 0, 0, 0],  
-                writer,
-            ),
-            0x02 => response(0x81, 0x02, &[], writer),
+            0x01 => response(0x81, 0x01, &[0, 3, 0, 0, 0, 0, 0, 0], hid_tx),
+            0x02 => response(0x81, 0x02, &[], hid_tx),
             0x04 => {
                 println!("sending input now"); // TODO
             }
@@ -132,7 +123,7 @@ fn send_response(buffer: &[u8], input: &[u8], writer: &mut BufWriter<File>) {
         }
     } else if buffer[0] == 0x01 && buffer.len() > 16 {
         match buffer[10] {
-            0x01 => uart_response(0x81, 0x01, input, &[0x03], writer),
+            0x01 => uart_response(0x81, 0x01, input, &[0x03], hid_tx),
             0x02 => uart_response(
                 0x82,
                 0x02,
@@ -140,59 +131,73 @@ fn send_response(buffer: &[u8], input: &[u8], writer: &mut BufWriter<File>) {
                 &[
                     0x03, 0x48, 0x03, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x01,
                 ],
-                writer,
+                hid_tx,
             ),
             0x03 | 0x08 | 0x30 | 0x38 | 0x40 | 0x48 => {
-                uart_response(0x80, buffer[10], input, &[], writer)
+                uart_response(0x80, buffer[10], input, &[], hid_tx)
             }
-            0x04 => uart_response(0x83, 0x04, input, &[], writer),
+            0x04 => uart_response(0x83, 0x04, input, &[], hid_tx),
             0x21 => uart_response(
                 0xa0,
                 0x21,
                 input,
                 &[0x01, 0x00, 0xff, 0x00, 0x03, 0x00, 0x05, 0x01],
-                writer,
+                hid_tx,
             ),
             0x10 => match buffer[11] {
                 0x00 => {
                     if buffer[12] == 0x60 {
-                        spi_response(0x00, 0x60, input, &magic::SERIAL_NUMBER, writer)
+                        spi_response(0x00, 0x60, input, &magic::SERIAL_NUMBER, hid_tx)
                     }
                 }
                 0x50 => {
                     if buffer[12] == 0x60 {
-                        spi_response(0x50, 0x60, input, &magic::DEFAULT_COLOUR, writer)
+                        spi_response(0x50, 0x60, input, &magic::DEFAULT_COLOUR, hid_tx)
                     }
                 }
                 0x80 => {
                     if buffer[12] == 0x60 {
-                        spi_response(0x80, 0x60, input, &magic::SENSOR_STICK_PARAMS, writer)
+                        spi_response(0x80, 0x60, input, &magic::SENSOR_STICK_PARAMS, hid_tx)
                     }
                 }
                 0x98 => {
                     if buffer[12] == 0x60 {
-                        spi_response(0x98, 0x60, input, &magic::STICK_PARAMS_2, writer)
+                        spi_response(0x98, 0x60, input, &magic::STICK_PARAMS_2, hid_tx)
                     }
                 }
                 0x3d => {
                     if buffer[12] == 0x60 {
-                        spi_response(0x3d, 0x60, input, &magic::CONFIG, writer)
+                        spi_response(0x3d, 0x60, input, &magic::CONFIG, hid_tx)
                     }
                 }
                 0x10 => {
                     if buffer[12] == 0x80 {
-                        spi_response(0x10, 0x80, input, &magic::CALIBRATION, writer)
+                        spi_response(0x10, 0x80, input, &magic::CALIBRATION, hid_tx)
                     }
                 }
                 0x28 => {
                     if buffer[12] == 0x80 {
-                        spi_response(0x28, 0x80, input, &magic::SENSOR_CALIBRATION, writer)
+                        spi_response(0x28, 0x80, input, &magic::SENSOR_CALIBRATION, hid_tx)
                     }
                 }
                 _ => (),
             },
             _ => (),
         }
+    }
+}
+
+impl NsProcon {
+    fn send_input(&self) {
+        let _ = match &self.hid_thread_tx {
+            Some(hid_tx) => {
+                let mut input_msg = vec![0x30, 0x00, 0x30];
+                input_msg.extend_from_slice(self.input_state.as_buffer());
+                input_msg.extend_from_slice(&[0; 52]);
+                hid_tx.send(input_msg)
+            }
+            None => Ok(()),
+        };
     }
 }
 
@@ -203,19 +208,33 @@ impl Controller for NsProcon {
         NsProcon {
             hid_path: path.as_ref().to_path_buf(),
             input_state: BitArray::zeroed(),
-            thread_tx: None,
+            hid_thread_tx: None,
+            protocol_thread_tx: None,
         }
     }
     fn start_comms(&mut self) -> Result<()> {
-        let (tx, rx) = mpsc::channel();
+        let (hid_tx, hid_rx) = mpsc::channel::<Vec<u8>>();
+        let (protocol_tx, protocol_rx) = mpsc::channel();
         let hid_read = OpenOptions::new().read(true).open(&self.hid_path)?;
         let hid_write = OpenOptions::new().write(true).open(&self.hid_path)?;
 
         let mut buffer = [0; 64];
         let mut reader = BufReader::new(hid_read);
         let mut writer = BufWriter::new(hid_write);
+
+        // Thread for writing to the HID device
+        thread::spawn(move || {
+            for to_write in hid_rx {
+                let _ = writer.write_all(&to_write);
+                let _ = writer.flush();
+            }
+        });
+
+        self.hid_thread_tx = Some(hid_tx.clone());
+
+        // Thread for responding to data from the Switch
         thread::spawn(move || loop {
-            match rx.try_recv() {
+            match protocol_rx.try_recv() {
                 Ok(_) | Err(TryRecvError::Disconnected) => {
                     break;
                 }
@@ -234,29 +253,32 @@ impl Controller for NsProcon {
             let input = &magic::INITIAL_INPUT[1..10];
 
             if read >= 10 {
-                send_response(&buffer, input, &mut writer);
+                send_response(&buffer, input, &hid_tx);
             } else {
                 for i in (0..read).step_by(2) {
-                    send_response(&buffer[i..(i + 2)], input, &mut writer)
+                    send_response(&buffer[i..(i + 2)], input, &hid_tx)
                 }
             }
         });
-        self.thread_tx = Some(tx);
+        self.protocol_thread_tx = Some(protocol_tx);
         Ok(())
     }
     fn stop(&mut self) {
-        let _ = match &self.thread_tx {
-            Some(thread_tx) => thread_tx.send(()),
+        let _ = match &self.protocol_thread_tx {
+            Some(protocol_thread_tx) => protocol_thread_tx.send(()),
             None => Ok(()),
         };
-        self.thread_tx = None;
+        self.protocol_thread_tx = None;
+        self.hid_thread_tx = None;
     }
 
     fn press(&mut self, index: usize) {
         self.input_state.set(index, true);
+        self.send_input();
     }
     fn release(&mut self, index: usize) {
         self.input_state.set(index, false);
+        self.send_input();
     }
     fn set_axis(&mut self, index: usize, value: u16) {
         match index {
@@ -265,6 +287,7 @@ impl Controller for NsProcon {
             inputs::AXIS_RH => self.input_state[48..60].store(value >> 4),
             inputs::AXIS_RV => self.input_state[60..72].store(value >> 4),
             _ => (),
-        }
+        };
+        self.send_input();
     }
 }

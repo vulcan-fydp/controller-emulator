@@ -1,4 +1,4 @@
-use std::fs::{create_dir_all, remove_dir_all, File};
+use std::fs::{create_dir_all, read_dir, remove_dir, remove_file, File};
 use std::io::prelude::*;
 use std::io::Result;
 use std::os::unix::fs::symlink;
@@ -69,6 +69,73 @@ pub struct Gadget {
     pub(in crate) manufacturer: String,
 }
 
+pub fn activate(name: &str) -> Result<()> {
+    let path = Path::new("/sys/kernel/config/usb_gadget")
+        .join(name)
+        .join("UDC");
+    Command::new("sh")
+        .arg("-c")
+        .arg(format!("echo \"\" > {}", path.display()))
+        .output()?;
+    let output = Command::new("ls").arg("/sys/class/udc").output()?;
+    let mut udc = File::create(&path)?;
+    udc.write_all(&output.stdout)?;
+    Ok(())
+}
+
+pub fn deactivate(name: &str) -> Result<()> {
+    let path = Path::new("/sys/kernel/config/usb_gadget")
+        .join(name)
+        .join("UDC");
+    Command::new("sh")
+        .arg("-c")
+        .arg(format!("echo \"\" > {}", path.display()))
+        .output()?;
+    Ok(())
+}
+
+/// Completely removes the gadget at /sys/kernel/config/usb_gadget/<name>
+/// This function is kinda gross since you can't just rm -rf but have to
+/// individually remove all of the internals
+pub fn remove_config(name: &str) -> Result<()> {
+    let base_path = Path::new("/sys/kernel/config/usb_gadget").join(name);
+
+    for config in read_dir(base_path.join("configs"))? {
+        let config = config?;
+        for function in read_dir(config.path())? {
+            let function = function?;
+            if function.path().is_dir() {
+                let _ = remove_file(function.path());
+            }
+        }
+
+        for lang in read_dir(config.path().join("strings"))? {
+            let lang = lang?;
+            if lang.path().is_dir() {
+                let _ = remove_dir(lang.path());
+            }
+        }
+
+        let _ = remove_dir(config.path());
+    }
+
+    for function in read_dir(base_path.join("functions"))? {
+        let function = function?;
+        let _ = remove_dir(function.path());
+    }
+
+    for lang in read_dir(base_path.join("strings"))? {
+        let lang = lang?;
+        if !lang.path().is_dir() {
+            let _ = remove_dir(lang.path());
+        }
+    }
+
+    let _ = remove_dir(base_path);
+
+    Ok(())
+}
+
 fn write_file(path: &Path, name: &str, contents: &[u8]) -> Result<()> {
     create_dir_all(&path)?;
     let file_name = Path::join(path, name);
@@ -91,10 +158,10 @@ fn write_file_int(path: &Path, name: &str, contents: u32) -> Result<()> {
 
 impl Gadget {
     pub fn create_config(&self, name: &str) -> Result<()> {
-        let base_path = Path::join(Path::new("/sys/kernel/config/usb_gadget"), name);
-
         // Remove existing configuration
-        let _ = remove_dir_all(&base_path);
+        let _ = remove_config(name);
+
+        let base_path = Path::new("/sys/kernel/config/usb_gadget").join(name);
 
         write_file_str(&base_path, "max_speed", &self.max_speed.to_string())?;
         write_file_byte(&base_path, "bDeviceClass", self.device_class)?;
@@ -140,18 +207,4 @@ impl Gadget {
 
         Ok(())
     }
-}
-
-pub fn activate(name: &str) -> Result<()> {
-    let path = Path::new("/sys/kernel/config/usb_gadget")
-        .join(name)
-        .join("UDC");
-    Command::new("sh")
-        .arg("-c")
-        .arg(format!("echo \"\" > {}", path.display()))
-        .status()?;
-    let output = Command::new("ls").arg("/sys/class/udc").output()?;
-    let mut udc = File::create(&path)?;
-    udc.write_all(&output.stdout)?;
-    Ok(())
 }

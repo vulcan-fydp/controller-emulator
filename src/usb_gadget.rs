@@ -1,3 +1,4 @@
+use std::fmt;
 use std::fs::{create_dir_all, read_dir, remove_dir, remove_file, File};
 use std::io::prelude::*;
 use std::io::Result;
@@ -20,14 +21,18 @@ impl Default for Speed {
     }
 }
 
-impl Speed {
-    fn to_string(&self) -> String {
-        match self {
-            Speed::LowSpeed => "low-speed".to_string(),
-            Speed::FullSpeed => "full-speed".to_string(),
-            Speed::HighSpeed => "high-speed".to_string(),
-            Speed::SuperSpeed => "super-speed".to_string(),
-        }
+impl fmt::Display for Speed {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Speed::LowSpeed => "low-speed".to_string(),
+                Speed::FullSpeed => "full-speed".to_string(),
+                Speed::HighSpeed => "high-speed".to_string(),
+                Speed::SuperSpeed => "super-speed".to_string(),
+            }
+        )
     }
 }
 

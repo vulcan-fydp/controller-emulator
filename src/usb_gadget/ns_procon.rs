@@ -44,7 +44,7 @@ pub fn ns_procons() -> Gadget {
         manufacturer: "Nintendo Co., Ltd".to_string(),
 
         configs: vec![config],
-        hid_functions: vec![func.clone(), func.clone(), func.clone(), func.clone()],
+        hid_functions: vec![func.clone(), func.clone(), func.clone(), func],
 
         ..Default::default()
     }

@@ -241,10 +241,7 @@ impl Controller for NsProcon {
                 Err(TryRecvError::Empty) => {}
             };
 
-            let read = match reader.read(&mut buffer) {
-                Ok(n) => n,
-                Err(_) => 0,
-            };
+            let read = reader.read(&mut buffer).unwrap_or(0);
 
             if read == 0 {
                 continue;

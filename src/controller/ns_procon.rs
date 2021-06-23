@@ -4,34 +4,35 @@ use std::fs::OpenOptions;
 use std::io::prelude::*;
 use std::io::{BufReader, BufWriter, Result};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Sender, TryRecvError};
+use std::sync::mpsc::{self, SyncSender, TryRecvError};
 use std::thread;
+use std::time::SystemTime;
 
 // Button index constants
 pub mod inputs {
-    pub const BUTTON_Y: usize = 7;
-    pub const BUTTON_X: usize = 6;
-    pub const BUTTON_B: usize = 5;
-    pub const BUTTON_A: usize = 4;
-    pub const BUTTON_RSR: usize = 3;
-    pub const BUTTON_RSL: usize = 2;
-    pub const BUTTON_R: usize = 1;
-    pub const BUTTON_ZR: usize = 0;
-    pub const BUTTON_MINUS: usize = 15;
-    pub const BUTTON_PLUS: usize = 14;
-    pub const BUTTON_R_STICK: usize = 13;
-    pub const BUTTON_L_STICK: usize = 12;
-    pub const BUTTON_HOME: usize = 11;
-    pub const BUTTON_CAPTURE: usize = 10;
-    pub const BUTTON_CHARGING_GRIP: usize = 8;
-    pub const BUTTON_DOWN: usize = 23;
-    pub const BUTTON_UP: usize = 22;
-    pub const BUTTON_RIGHT: usize = 21;
-    pub const BUTTON_LEFT: usize = 20;
-    pub const BUTTON_LSR: usize = 19;
-    pub const BUTTON_LSL: usize = 18;
-    pub const BUTTON_L: usize = 17;
-    pub const BUTTON_ZL: usize = 16;
+    pub const BUTTON_Y: usize = 0;
+    pub const BUTTON_X: usize = 1;
+    pub const BUTTON_B: usize = 2;
+    pub const BUTTON_A: usize = 3;
+    pub const BUTTON_RSR: usize = 4;
+    pub const BUTTON_RSL: usize = 5;
+    pub const BUTTON_R: usize = 6;
+    pub const BUTTON_ZR: usize = 7;
+    pub const BUTTON_MINUS: usize = 8;
+    pub const BUTTON_PLUS: usize = 9;
+    pub const BUTTON_R_STICK: usize = 10;
+    pub const BUTTON_L_STICK: usize = 11;
+    pub const BUTTON_HOME: usize = 12;
+    pub const BUTTON_CAPTURE: usize = 13;
+    pub const BUTTON_CHARGING_GRIP: usize = 5;
+    pub const BUTTON_DOWN: usize = 16;
+    pub const BUTTON_UP: usize = 17;
+    pub const BUTTON_RIGHT: usize = 18;
+    pub const BUTTON_LEFT: usize = 19;
+    pub const BUTTON_LSR: usize = 20;
+    pub const BUTTON_LSL: usize = 21;
+    pub const BUTTON_L: usize = 22;
+    pub const BUTTON_ZL: usize = 23;
 
     pub const AXIS_LH: usize = 0;
     pub const AXIS_LV: usize = 1;
@@ -69,15 +70,23 @@ mod magic {
     ];
 }
 
+fn timestamp() -> u8 {
+    (SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_millis()
+        & 0xFF) as u8
+}
+
 #[derive(Debug)]
 pub struct NsProcon {
     hid_path: PathBuf,
     input_state: BitArr!(for 72, in Lsb0, u8),
-    hid_thread_tx: Option<Sender<Vec<u8>>>,
-    protocol_thread_tx: Option<Sender<()>>,
+    hid_thread_tx: Option<SyncSender<Vec<u8>>>,
+    protocol_thread_tx: Option<SyncSender<()>>,
 }
 
-fn response(code: u8, cmd: u8, data: &[u8], hid_tx: &Sender<Vec<u8>>) {
+fn response(code: u8, cmd: u8, data: &[u8], hid_tx: &SyncSender<Vec<u8>>) {
     if data.len() + 2 > 64 {
         return;
     }
@@ -86,29 +95,29 @@ fn response(code: u8, cmd: u8, data: &[u8], hid_tx: &Sender<Vec<u8>>) {
     let _ = hid_tx.send(send);
 }
 
-fn uart_response(code: u8, subcmd: u8, input: &[u8], data: &[u8], hid_tx: &Sender<Vec<u8>>) {
-    // TODO timestamp?
+fn uart_response(code: u8, subcmd: u8, input: &[u8], data: &[u8], hid_tx: &SyncSender<Vec<u8>>) {
     response(
         0x21,
-        0x00,
-        &[&[0x81], input, &[0x0c, code, subcmd], data].concat(),
+        timestamp(),
+        &[&[0x91], input, &[0x0c, code, subcmd], data].concat(),
         hid_tx,
     )
 }
 
-fn spi_response(addr_lo: u8, addr_hi: u8, input: &[u8], data: &[u8], hid_tx: &Sender<Vec<u8>>) {
+fn spi_response(addr_lo: u8, addr_hi: u8, input: &[u8], data: &[u8], hid_tx: &SyncSender<Vec<u8>>) {
+    let data_len = data.len() as u8;
     uart_response(
         0x90,
         0x10,
         input,
-        &[&[addr_lo, addr_hi, 0x00, 0x00], data].concat(),
+        &[&[addr_lo, addr_hi, 0x00, 0x00, data_len], data].concat(),
         hid_tx,
     );
 }
 
 // All credit for this function goes to:
 // https://mzyy94.com/blog/2020/03/20/nintendo-switch-pro-controller-usb-gadget/
-fn send_response(buffer: &[u8], input: &[u8], hid_tx: &Sender<Vec<u8>>) {
+fn send_response(buffer: &[u8], input: &[u8], hid_tx: &SyncSender<Vec<u8>>) {
     if buffer.len() < 2 {
         return;
     }
@@ -191,7 +200,7 @@ impl NsProcon {
     fn send_input(&self) {
         let _ = match &self.hid_thread_tx {
             Some(hid_tx) => {
-                let mut input_msg = vec![0x30, 0x00, 0x30];
+                let mut input_msg = vec![0x30, timestamp(), 0x91];
                 input_msg.extend_from_slice(self.input_state.as_buffer());
                 input_msg.extend_from_slice(&[0; 52]);
                 hid_tx.send(input_msg)
@@ -213,8 +222,8 @@ impl Controller for NsProcon {
         }
     }
     fn start_comms(&mut self) -> Result<()> {
-        let (hid_tx, hid_rx) = mpsc::channel::<Vec<u8>>();
-        let (protocol_tx, protocol_rx) = mpsc::channel();
+        let (hid_tx, hid_rx) = mpsc::sync_channel::<Vec<u8>>(10);
+        let (protocol_tx, protocol_rx) = mpsc::sync_channel(10);
         let hid_read = OpenOptions::new().read(true).open(&self.hid_path)?;
         let hid_write = OpenOptions::new().write(true).open(&self.hid_path)?;
 
@@ -225,6 +234,7 @@ impl Controller for NsProcon {
         // Thread for writing to the HID device
         thread::spawn(move || {
             for to_write in hid_rx {
+                // println!("<<< {:02x?}", &to_write);
                 let _ = writer.write_all(&to_write);
                 let _ = writer.flush();
             }
@@ -246,6 +256,8 @@ impl Controller for NsProcon {
             if read == 0 {
                 continue;
             }
+
+            // println!(">>> {:02x?}", &buffer);
 
             let input = &magic::INITIAL_INPUT[1..10];
 

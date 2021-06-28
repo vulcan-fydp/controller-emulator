@@ -99,6 +99,11 @@ pub fn deactivate(name: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn reset(name: &str) -> Result<()> {
+    let _ = deactivate(name);
+    activate(name)
+}
+
 /// Completely removes the gadget at /sys/kernel/config/usb_gadget/<name>
 /// This function is kinda gross since you can't just rm -rf but have to
 /// individually remove all of the internals

@@ -10,6 +10,7 @@ pub trait Controller {
     fn start_comms(&mut self) -> Result<()>;
     fn stop(&mut self);
 
+    fn set(&mut self, index: usize, value: bool);
     fn press(&mut self, index: usize);
     fn release(&mut self, index: usize);
     fn set_axis(&mut self, index: usize, value: u16);

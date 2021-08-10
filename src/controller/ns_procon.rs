@@ -281,14 +281,19 @@ impl Controller for NsProcon {
         self.hid_thread_tx = None;
     }
 
+    fn set(&mut self, index: usize, value: bool) {
+        self.input_state.set(index, value);
+        self.send_input();
+    }
+
     fn press(&mut self, index: usize) {
-        self.input_state.set(index, true);
-        self.send_input();
+        self.set(index, true);
     }
+
     fn release(&mut self, index: usize) {
-        self.input_state.set(index, false);
-        self.send_input();
+        self.set(index, false);
     }
+
     fn set_axis(&mut self, index: usize, value: u16) {
         match index {
             inputs::AXIS_LH => self.input_state[24..36].store(value >> 4),

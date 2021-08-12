@@ -304,4 +304,8 @@ impl Controller for NsProcon {
         };
         self.send_input();
     }
+
+    fn log_state(&self) {
+        log::debug!("{:?}", self.input_state);
+    }
 }

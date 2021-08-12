@@ -14,4 +14,6 @@ pub trait Controller {
     fn press(&mut self, index: usize);
     fn release(&mut self, index: usize);
     fn set_axis(&mut self, index: usize, value: u16);
+
+    fn log_state(&self);
 }

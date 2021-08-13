@@ -4,7 +4,7 @@ pub mod ns_procon;
 pub trait Controller {
     type C;
 
-    fn start_comms(&mut self, num: u8) -> Result<()>;
+    fn start_comms(&mut self) -> Result<()>;
     fn stop(&mut self);
 
     fn set(&mut self, index: usize, value: bool, flush: bool);

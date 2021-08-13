@@ -201,7 +201,7 @@ impl NsProcon {
         let mut procon = NsProcon {
             hid_path: path.as_ref().to_path_buf(),
             input_state: BitArray::zeroed(),
-            colour: [body_col, &[0, 0, 0], body_col, body_col].concat(),
+            colour: [body_col, [0, 0, 0], body_col, body_col].concat(),
             mac_addr: rand::thread_rng().gen::<[u8; 6]>(),
             hid_thread_tx: None,
             protocol_thread_tx: None,
@@ -251,7 +251,7 @@ impl Controller for NsProcon {
 
         // Thread for responding to data from the Switch
         thread::spawn(move || loop {
-            match protool_rx.try_recv() {
+            match protocol_rx.try_recv() {
                 Ok(_) | Err(TryRecvError::Disconnected) => {
                     break;
                 }

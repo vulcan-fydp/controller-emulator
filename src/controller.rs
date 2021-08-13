@@ -1,19 +1,17 @@
 use std::io::Result;
-use std::path::Path;
 pub mod ns_procon;
 
 pub trait Controller {
     type C;
 
-    fn create<P: AsRef<Path>>(path: P) -> Self::C;
-
-    fn start_comms(&mut self) -> Result<()>;
+    fn start_comms(&mut self, num: u8) -> Result<()>;
     fn stop(&mut self);
 
-    fn set(&mut self, index: usize, value: bool);
-    fn press(&mut self, index: usize);
-    fn release(&mut self, index: usize);
-    fn set_axis(&mut self, index: usize, value: u16);
+    fn set(&mut self, index: usize, value: bool, flush: bool);
+    fn press(&mut self, index: usize, flush: bool);
+    fn release(&mut self, index: usize, flush: bool);
+    fn set_axis(&mut self, index: usize, value: u16, flush: bool);
+    fn flush_input(&mut self);
 
     fn log_state(&self);
 }

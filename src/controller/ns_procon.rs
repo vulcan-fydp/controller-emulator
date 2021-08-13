@@ -1,5 +1,6 @@
 use crate::controller::Controller;
 use bitvec::prelude::*;
+use rand::Rng;
 use std::fs::OpenOptions;
 use std::io::prelude::*;
 use std::io::{BufReader, BufWriter, Result};
@@ -41,9 +42,7 @@ pub mod inputs {
 }
 
 mod magic {
-    pub const INITIAL_INPUT: [u8; 11] = [
-        0x81, 0x00, 0x80, 0x00, 0xf8, 0xd7, 0x7a, 0x22, 0xc8, 0x7b, 0x0c,
-    ];
+    pub const INITIAL_INPUT: [u8; 9] = [0x00, 0x80, 0x00, 0xf8, 0xd7, 0x7a, 0x22, 0xc8, 0x7b];
     pub const SERIAL_NUMBER: [u8; 16] = [0xff; 16];
     pub const SENSOR_STICK_PARAMS: [u8; 24] = [
         0x50, 0xfd, 0x00, 0x00, 0xc6, 0x0f, 0x0f, 0x30, 0x61, 0x96, 0x30, 0xf3, 0xd4, 0x14, 0x54,
@@ -65,9 +64,6 @@ mod magic {
         0xbe, 0xff, 0x3e, 0x00, 0xf0, 0x01, 0x00, 0x40, 0x00, 0x40, 0x00, 0x40, 0xfe, 0xff, 0xfe,
         0xff, 0x08, 0x00, 0xe7, 0x3b, 0xe7, 0x3b, 0xe7, 0x3b,
     ];
-    pub const DEFAULT_COLOUR: [u8; 12] = [
-        0x03, 0x9b, 0xc5, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-    ];
 }
 
 fn timestamp() -> u8 {
@@ -76,14 +72,6 @@ fn timestamp() -> u8 {
         .unwrap()
         .as_millis()
         & 0xFF) as u8
-}
-
-#[derive(Debug)]
-pub struct NsProcon {
-    hid_path: PathBuf,
-    input_state: BitArr!(for 72, in Lsb0, u8),
-    hid_thread_tx: Option<SyncSender<Vec<u8>>>,
-    protocol_thread_tx: Option<SyncSender<()>>,
 }
 
 fn response(code: u8, cmd: u8, data: &[u8], hid_tx: &SyncSender<Vec<u8>>) {
@@ -99,7 +87,7 @@ fn uart_response(code: u8, subcmd: u8, input: &[u8], data: &[u8], hid_tx: &SyncS
     response(
         0x21,
         timestamp(),
-        &[&[0x91], input, &[0x0c, code, subcmd], data].concat(),
+        &[&[0x81], input, &[0x0c, code, subcmd], data].concat(),
         hid_tx,
     )
 }
@@ -117,17 +105,21 @@ fn spi_response(addr_lo: u8, addr_hi: u8, input: &[u8], data: &[u8], hid_tx: &Sy
 
 // All credit for this function goes to:
 // https://mzyy94.com/blog/2020/03/20/nintendo-switch-pro-controller-usb-gadget/
-fn send_response(buffer: &[u8], input: &[u8], hid_tx: &SyncSender<Vec<u8>>) {
+fn send_response(
+    buffer: &[u8],
+    input: &[u8],
+    hid_tx: &SyncSender<Vec<u8>>,
+    colour: &[u8],
+    mac_addr: &[u8],
+) {
     if buffer.len() < 2 {
         return;
     }
     if buffer[0] == 0x80 {
         match buffer[1] {
-            0x01 => response(0x81, 0x01, &[0, 3, 0, 0, 0, 0, 0, 0], hid_tx),
+            0x01 => response(0x81, 0x01, &[&[0, 3], mac_addr].concat(), hid_tx),
             0x02 => response(0x81, 0x02, &[], hid_tx),
-            0x04 => {
-                println!("sending input now"); // TODO
-            }
+            0x04 => { /* Input sending now (do something?) */ }
             _ => (),
         }
     } else if buffer[0] == 0x01 && buffer.len() > 16 {
@@ -137,9 +129,7 @@ fn send_response(buffer: &[u8], input: &[u8], hid_tx: &SyncSender<Vec<u8>>) {
                 0x82,
                 0x02,
                 input,
-                &[
-                    0x03, 0x48, 0x03, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x01,
-                ],
+                &[&[0x03, 0x48, 0x03, 0x02], mac_addr, &[0x03, 0x01]].concat(),
                 hid_tx,
             ),
             0x03 | 0x08 | 0x30 | 0x38 | 0x40 | 0x48 => {
@@ -161,7 +151,7 @@ fn send_response(buffer: &[u8], input: &[u8], hid_tx: &SyncSender<Vec<u8>>) {
                 }
                 0x50 => {
                     if buffer[12] == 0x60 {
-                        spi_response(0x50, 0x60, input, &magic::DEFAULT_COLOUR, hid_tx)
+                        spi_response(0x50, 0x60, input, &colour, hid_tx)
                     }
                 }
                 0x80 => {
@@ -196,11 +186,34 @@ fn send_response(buffer: &[u8], input: &[u8], hid_tx: &SyncSender<Vec<u8>>) {
     }
 }
 
+#[derive(Debug)]
+pub struct NsProcon {
+    hid_path: PathBuf,
+    input_state: BitArr!(for 72, in Lsb0, u8),
+    colour: Vec<u8>,
+    mac_addr: [u8; 6],
+    hid_thread_tx: Option<SyncSender<Vec<u8>>>,
+    protocol_thread_tx: Option<SyncSender<()>>,
+}
+
 impl NsProcon {
+    pub fn create<P: AsRef<Path>>(path: P, body_col: [u8; 3]) -> NsProcon {
+        let mut procon = NsProcon {
+            hid_path: path.as_ref().to_path_buf(),
+            input_state: BitArray::zeroed(),
+            colour: [body_col, &[0, 0, 0], body_col, body_col].concat(),
+            mac_addr: rand::thread_rng().gen::<[u8; 6]>(),
+            hid_thread_tx: None,
+            protocol_thread_tx: None,
+        };
+        procon.press(inputs::BUTTON_CHARGING_GRIP, false);
+        procon
+    }
+
     fn send_input(&self) {
         let _ = match &self.hid_thread_tx {
             Some(hid_tx) => {
-                let mut input_msg = vec![0x30, timestamp(), 0x91];
+                let mut input_msg = vec![0x30, timestamp(), 0x81];
                 input_msg.extend_from_slice(self.input_state.as_buffer());
                 input_msg.extend_from_slice(&[0; 52]);
                 hid_tx.send(input_msg)
@@ -213,19 +226,13 @@ impl NsProcon {
 impl Controller for NsProcon {
     type C = NsProcon;
 
-    fn create<P: AsRef<Path>>(path: P) -> NsProcon {
-        NsProcon {
-            hid_path: path.as_ref().to_path_buf(),
-            input_state: BitArray::zeroed(),
-            hid_thread_tx: None,
-            protocol_thread_tx: None,
-        }
-    }
     fn start_comms(&mut self) -> Result<()> {
         let (hid_tx, hid_rx) = mpsc::sync_channel::<Vec<u8>>(10);
         let (protocol_tx, protocol_rx) = mpsc::sync_channel(10);
         let hid_read = OpenOptions::new().read(true).open(&self.hid_path)?;
         let hid_write = OpenOptions::new().write(true).open(&self.hid_path)?;
+        let colour = self.colour.clone();
+        let mac_addr = self.mac_addr.clone();
 
         let mut buffer = [0; 64];
         let mut reader = BufReader::new(hid_read);
@@ -244,7 +251,7 @@ impl Controller for NsProcon {
 
         // Thread for responding to data from the Switch
         thread::spawn(move || loop {
-            match protocol_rx.try_recv() {
+            match protool_rx.try_recv() {
                 Ok(_) | Err(TryRecvError::Disconnected) => {
                     break;
                 }
@@ -257,15 +264,18 @@ impl Controller for NsProcon {
                 continue;
             }
 
-            // println!(">>> {:02x?}", &buffer);
+            // println!(
+            //     ">>> {:02x} {:02x} {:02x} {:02x} {:02x}",
+            //     &buffer[0], &buffer[1], &buffer[10], &buffer[11], &buffer[12]
+            // );
 
-            let input = &magic::INITIAL_INPUT[1..10];
+            let input = &magic::INITIAL_INPUT;
 
             if read >= 10 {
-                send_response(&buffer, input, &hid_tx);
+                send_response(&buffer, input, &hid_tx, &colour, &mac_addr);
             } else {
                 for i in (0..read).step_by(2) {
-                    send_response(&buffer[i..(i + 2)], input, &hid_tx)
+                    send_response(&buffer[i..(i + 2)], input, &hid_tx, &colour, &mac_addr)
                 }
             }
         });
@@ -281,20 +291,22 @@ impl Controller for NsProcon {
         self.hid_thread_tx = None;
     }
 
-    fn set(&mut self, index: usize, value: bool) {
+    fn set(&mut self, index: usize, value: bool, flush: bool) {
         self.input_state.set(index, value);
-        self.send_input();
+        if flush {
+            self.send_input();
+        }
     }
 
-    fn press(&mut self, index: usize) {
-        self.set(index, true);
+    fn press(&mut self, index: usize, flush: bool) {
+        self.set(index, true, flush);
     }
 
-    fn release(&mut self, index: usize) {
-        self.set(index, false);
+    fn release(&mut self, index: usize, flush: bool) {
+        self.set(index, false, flush);
     }
 
-    fn set_axis(&mut self, index: usize, value: u16) {
+    fn set_axis(&mut self, index: usize, value: u16, flush: bool) {
         match index {
             inputs::AXIS_LH => self.input_state[24..36].store(value >> 4),
             inputs::AXIS_LV => self.input_state[36..48].store(value >> 4),
@@ -302,6 +314,12 @@ impl Controller for NsProcon {
             inputs::AXIS_RV => self.input_state[60..72].store(value >> 4),
             _ => (),
         };
+        if flush {
+            self.send_input();
+        }
+    }
+
+    fn flush_input(&mut self) {
         self.send_input();
     }
 

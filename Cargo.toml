@@ -10,7 +10,11 @@ path = "src/lib.rs"
 
 [[bin]]
 name = "test"
-path = "src/bin/main.rs"
+path = "src/bin/test.rs"
+
+[[bin]]
+name = "fake_procon"
+path = "src/bin/fake_procon.rs"
 
 [[bin]]
 name = "configure_ns_procon"
@@ -23,3 +27,7 @@ bitvec = "0.22.3"
 log = "0.4.14"
 env_logger = "0.8.3"
 rand = "0.8.4"
+nix = "0.10.0"
+anyhow = "1.0"
+ctrlc = "3.2.1"
+hex = "0.4"

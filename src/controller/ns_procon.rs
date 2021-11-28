@@ -189,7 +189,8 @@ fn send_response(
 
 #[derive(Debug)]
 pub struct NsProcon {
-    hid_path: PathBuf,
+    hid_in_path: PathBuf,
+    hid_out_path: PathBuf,
     input_state: BitArr!(for 72, in Lsb0, u8),
     colour: Vec<u8>,
     mac_addr: [u8; 6],
@@ -200,7 +201,22 @@ pub struct NsProcon {
 impl NsProcon {
     pub fn create<P: AsRef<Path>>(path: P, body_col: [u8; 3]) -> NsProcon {
         let mut procon = NsProcon {
-            hid_path: path.as_ref().to_path_buf(),
+            hid_in_path: path.as_ref().to_path_buf(),
+            hid_out_path: path.as_ref().to_path_buf(),
+            input_state: BitArray::zeroed(),
+            colour: [body_col, [0, 0, 0], body_col, body_col].concat(),
+            mac_addr: rand::thread_rng().gen::<[u8; 6]>(),
+            hid_thread_tx: None,
+            protocol_thread_tx: None,
+        };
+        procon.press(inputs::BUTTON_CHARGING_GRIP, false);
+        procon
+    }
+
+    pub fn create_separate<P: AsRef<Path>>(in_path: P, out_path: P, body_col: [u8; 3]) -> NsProcon {
+        let mut procon = NsProcon {
+            hid_in_path: in_path.as_ref().to_path_buf(),
+            hid_out_path: out_path.as_ref().to_path_buf(),
             input_state: BitArray::zeroed(),
             colour: [body_col, [0, 0, 0], body_col, body_col].concat(),
             mac_addr: rand::thread_rng().gen::<[u8; 6]>(),
@@ -231,8 +247,8 @@ impl Controller for NsProcon {
     fn start_comms(&mut self) -> Result<()> {
         let (hid_tx, hid_rx) = mpsc::sync_channel::<Vec<u8>>(10);
         let (protocol_tx, protocol_rx) = mpsc::sync_channel(10);
-        let hid_read = OpenOptions::new().read(true).open(&self.hid_path)?;
-        let hid_write = OpenOptions::new().write(true).open(&self.hid_path)?;
+        let hid_read = OpenOptions::new().read(true).open(&self.hid_in_path)?;
+        let hid_write = OpenOptions::new().write(true).open(&self.hid_out_path)?;
         let colour = self.colour.clone();
         let mac_addr = self.mac_addr.clone();
 

@@ -1,9 +1,10 @@
 use crate::controller::Controller;
+use anyhow::Result;
 use bitvec::prelude::*;
 use rand::Rng;
 use std::fs::OpenOptions;
 use std::io::prelude::*;
-use std::io::{BufReader, BufWriter, Result};
+use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, SyncSender, TryRecvError};
 use std::thread;
@@ -206,20 +207,21 @@ impl NsProcon {
             hid_thread_tx: None,
             protocol_thread_tx: None,
         };
-        procon.press(inputs::BUTTON_CHARGING_GRIP, false);
+        let _ = procon.press(inputs::BUTTON_CHARGING_GRIP, false);
         procon
     }
 
-    fn send_input(&self) {
-        let _ = match &self.hid_thread_tx {
+    fn send_input(&self) -> Result<()> {
+        match &self.hid_thread_tx {
             Some(hid_tx) => {
                 let mut input_msg = vec![0x30, timestamp(), 0x81];
                 input_msg.extend_from_slice(self.input_state.as_buffer());
                 input_msg.extend_from_slice(&[0; 52]);
-                hid_tx.send(input_msg)
+                hid_tx.try_send(input_msg)?
             }
-            None => Ok(()),
+            None => (),
         };
+        Ok(())
     }
 }
 
@@ -291,22 +293,23 @@ impl Controller for NsProcon {
         self.hid_thread_tx = None;
     }
 
-    fn set(&mut self, index: usize, value: bool, flush: bool) {
+    fn set(&mut self, index: usize, value: bool, flush: bool) -> Result<()> {
         self.input_state.set(index, value);
         if flush {
-            self.send_input();
+            return self.send_input();
         }
+        Ok(())
     }
 
-    fn press(&mut self, index: usize, flush: bool) {
-        self.set(index, true, flush);
+    fn press(&mut self, index: usize, flush: bool) -> Result<()> {
+        return self.set(index, true, flush);
     }
 
-    fn release(&mut self, index: usize, flush: bool) {
-        self.set(index, false, flush);
+    fn release(&mut self, index: usize, flush: bool) -> Result<()> {
+        return self.set(index, false, flush);
     }
 
-    fn set_axis(&mut self, index: usize, value: u16, flush: bool) {
+    fn set_axis(&mut self, index: usize, value: u16, flush: bool) -> Result<()> {
         match index {
             inputs::AXIS_LH => self.input_state[24..36].store(value >> 4),
             inputs::AXIS_LV => self.input_state[36..48].store(value >> 4),
@@ -315,12 +318,13 @@ impl Controller for NsProcon {
             _ => (),
         };
         if flush {
-            self.send_input();
+            return self.send_input();
         }
+        Ok(())
     }
 
-    fn flush_input(&mut self) {
-        self.send_input();
+    fn flush_input(&mut self) -> Result<()> {
+        return self.send_input();
     }
 
     fn log_state(&self) {

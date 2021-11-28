@@ -209,7 +209,7 @@ impl NsProcon {
             hid_thread_tx: None,
             protocol_thread_tx: None,
         };
-        procon.press(inputs::BUTTON_CHARGING_GRIP, false);
+        let _ = procon.press(inputs::BUTTON_CHARGING_GRIP, false);
         procon
     }
 

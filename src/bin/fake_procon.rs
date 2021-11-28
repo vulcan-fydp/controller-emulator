@@ -2,7 +2,7 @@ use anyhow::Result;
 use nix::sys::stat;
 use nix::unistd::mkfifo;
 use std::env;
-use std::fs::{remove_file, File, OpenOptions};
+use std::fs::{remove_file, OpenOptions};
 use std::io::prelude::*;
 use std::io::stdin;
 use std::path::Path;

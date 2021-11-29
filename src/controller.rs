@@ -1,5 +1,11 @@
 use anyhow::Result;
+use std::sync::mpsc::Receiver;
 pub mod ns_procon;
+
+pub enum ControllerEvent {
+    InputActive,
+    PlayerLights(u8),
+}
 
 pub trait Controller {
     type C;
@@ -12,6 +18,8 @@ pub trait Controller {
     fn release(&mut self, index: usize, flush: bool) -> Result<()>;
     fn set_axis(&mut self, index: usize, value: u16, flush: bool) -> Result<()>;
     fn flush_input(&mut self) -> Result<()>;
+
+    fn listen_for_events(&mut self) -> &Receiver<ControllerEvent>;
 
     fn log_state(&self);
 }

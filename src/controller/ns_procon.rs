@@ -1,4 +1,4 @@
-use crate::controller::Controller;
+use crate::controller::{Controller, ControllerEvent};
 use anyhow::Result;
 use bitvec::prelude::*;
 use rand::Rng;
@@ -6,7 +6,7 @@ use std::fs::OpenOptions;
 use std::io::prelude::*;
 use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, SyncSender, TryRecvError};
+use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
 use std::thread;
 use std::time::SystemTime;
 
@@ -187,6 +187,12 @@ fn send_response(
     }
 }
 
+fn send_event(buffer: &[u8], hid_tx: &SyncSender<ControllerEvent>) {
+    if buffer[0] == 0x01 && buffer.len() > 16 && buffer[10] == 0x30 {
+        let _ = hid_tx.try_send(ControllerEvent::PlayerLights(buffer[11]));
+    }
+}
+
 #[derive(Debug)]
 pub struct NsProcon {
     hid_in_path: PathBuf,
@@ -196,10 +202,13 @@ pub struct NsProcon {
     mac_addr: [u8; 6],
     hid_thread_tx: Option<SyncSender<Vec<u8>>>,
     protocol_thread_tx: Option<SyncSender<()>>,
+    event_tx: SyncSender<ControllerEvent>,
+    event_rx: Receiver<ControllerEvent>,
 }
 
 impl NsProcon {
     pub fn create<P: AsRef<Path>>(path: P, body_col: [u8; 3]) -> NsProcon {
+        let (event_tx, event_rx) = mpsc::sync_channel::<ControllerEvent>(10);
         let mut procon = NsProcon {
             hid_in_path: path.as_ref().to_path_buf(),
             hid_out_path: path.as_ref().to_path_buf(),
@@ -208,12 +217,15 @@ impl NsProcon {
             mac_addr: rand::thread_rng().gen::<[u8; 6]>(),
             hid_thread_tx: None,
             protocol_thread_tx: None,
+            event_tx,
+            event_rx,
         };
         let _ = procon.press(inputs::BUTTON_CHARGING_GRIP, false);
         procon
     }
 
     pub fn create_separate<P: AsRef<Path>>(in_path: P, out_path: P, body_col: [u8; 3]) -> NsProcon {
+        let (event_tx, event_rx) = mpsc::sync_channel::<ControllerEvent>(10);
         let mut procon = NsProcon {
             hid_in_path: in_path.as_ref().to_path_buf(),
             hid_out_path: out_path.as_ref().to_path_buf(),
@@ -222,6 +234,8 @@ impl NsProcon {
             mac_addr: rand::thread_rng().gen::<[u8; 6]>(),
             hid_thread_tx: None,
             protocol_thread_tx: None,
+            event_tx,
+            event_rx,
         };
         let _ = procon.press(inputs::BUTTON_CHARGING_GRIP, false);
         procon
@@ -251,6 +265,7 @@ impl Controller for NsProcon {
         let hid_write = OpenOptions::new().write(true).open(&self.hid_out_path)?;
         let colour = self.colour.clone();
         let mac_addr = self.mac_addr.clone();
+        let event_tx = self.event_tx.clone();
 
         let mut buffer = [0; 64];
         let mut reader = BufReader::new(hid_read);
@@ -291,9 +306,11 @@ impl Controller for NsProcon {
 
             if read >= 10 {
                 send_response(&buffer, input, &hid_tx, &colour, &mac_addr);
+                send_event(&buffer, &event_tx);
             } else {
                 for i in (0..read).step_by(2) {
-                    send_response(&buffer[i..(i + 2)], input, &hid_tx, &colour, &mac_addr)
+                    send_response(&buffer[i..(i + 2)], input, &hid_tx, &colour, &mac_addr);
+                    send_event(&buffer[i..(i + 2)], &event_tx);
                 }
             }
         });
@@ -341,6 +358,10 @@ impl Controller for NsProcon {
 
     fn flush_input(&mut self) -> Result<()> {
         return self.send_input();
+    }
+
+    fn listen_for_events(&mut self) -> &Receiver<ControllerEvent> {
+        return &self.event_rx;
     }
 
     fn log_state(&self) {
